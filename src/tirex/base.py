@@ -62,12 +62,60 @@ class PretrainedModel(ABC):
             ckp_kwargs = {}
         if device is None:
             device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        
+        checkpoint_path = None
+        
+        # 1. Check if path is a local directory with model.ckpt
         if os.path.exists(path):
-            print("Loading weights from local directory")
-            checkpoint_path = path
-        else:
-            repo_id = parse_hf_repo_id(path)
-            checkpoint_path = hf_hub_download(repo_id=repo_id, filename="model.ckpt", **hf_kwargs)
+            local_ckpt = os.path.join(path, "model.ckpt")
+            if os.path.exists(local_ckpt):
+                checkpoint_path = local_ckpt
+                print(f"Loading weights from local directory: {path}")
+            else:
+                # If path itself is a file, use it directly
+                if path.endswith(".ckpt"):
+                    checkpoint_path = path
+                    print(f"Loading weights from local file: {path}")
+        
+        # 2. Check TIREX_WEIGHTS_PATH environment variable
+        if checkpoint_path is None:
+            weights_path = os.getenv("TIREX_WEIGHTS_PATH", None)
+            if weights_path and os.path.exists(weights_path):
+                if os.path.isdir(weights_path):
+                    local_ckpt = os.path.join(weights_path, "model.ckpt")
+                    if os.path.exists(local_ckpt):
+                        checkpoint_path = local_ckpt
+                        print(f"Loading weights from TIREX_WEIGHTS_PATH: {weights_path}")
+                elif weights_path.endswith(".ckpt") and os.path.exists(weights_path):
+                    checkpoint_path = weights_path
+                    print(f"Loading weights from TIREX_WEIGHTS_PATH: {weights_path}")
+        
+        # 3. Check default offline cache directory (~/.cache/tirex/weights)
+        if checkpoint_path is None:
+            cache_dir = os.path.expanduser("~/.cache/tirex/weights")
+            if os.path.exists(cache_dir):
+                local_ckpt = os.path.join(cache_dir, "model.ckpt")
+                if os.path.exists(local_ckpt):
+                    checkpoint_path = local_ckpt
+                    print(f"Loading weights from cache directory: {cache_dir}")
+        
+        # 4. Fall back to HuggingFace download (requires internet)
+        if checkpoint_path is None:
+            print(f"Attempting to download from HuggingFace: {path}")
+            try:
+                repo_id = parse_hf_repo_id(path)
+                checkpoint_path = hf_hub_download(repo_id=repo_id, filename="model.ckpt", **hf_kwargs)
+                print(f"Downloaded from HuggingFace to: {checkpoint_path}")
+            except Exception as e:
+                raise ValueError(
+                    f"Could not load model from '{path}'.\n"
+                    f"Error: {str(e)}\n\n"
+                    f"For offline loading, please:\n"
+                    f"1. Set TIREX_WEIGHTS_PATH=/path/to/weights/directory\n"
+                    f"2. Or place weights in: ~/.cache/tirex/weights/\n"
+                    f"3. Or pass local path directly to load_model()\n"
+                    f"See setup_offline_weights.py for automated setup."
+                )
 
         # load lightning checkpoint
         checkpoint = torch.load(checkpoint_path, map_location=device, **ckp_kwargs, weights_only=True)

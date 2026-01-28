@@ -45,3 +45,4 @@ torch_compile_debug
 
 .DS_Store
 *.nsys-rep
+*.md
